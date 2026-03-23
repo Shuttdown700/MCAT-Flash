@@ -1,13 +1,15 @@
-import usb.core
+import serial.tools.list_ports
 
-# Find all USB devices
-devices = usb.core.find(find_all=True)
+print("Scanning for connected COM ports...\n")
+ports = serial.tools.list_ports.comports()
 
-# Print information about each device
-for device in devices:
-    print("Device:", device)
-    print("  Manufacturer:", usb.util.get_string(device, device.iManufacturer))
-    print("  Product:", usb.util.get_string(device, device.iProduct))
-    print("  Serial Number:", usb.util.get_string(device, device.iSerialNumber))
-    print("  Identifier:", f"usb://{hex(device.idVendor)}:{hex(device.idProduct)}/{device.serial_number}")
-    print()
+if not ports:
+    print("No COM ports found. Is the sensor plugged in?")
+else:
+    for port in ports:
+        print(f"Port: {port.device}")
+        print(f"  Description: {port.description}")
+        print(f"  Hardware ID: {port.hwid}")
+        if port.vid and port.pid:
+            print(f"  VID: {hex(port.vid)} | PID: {hex(port.pid)}")
+        print("-" * 50)

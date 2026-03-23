@@ -1,0 +1,5 @@
+binary hashing
+checking csv for already used device IDs
+pylinting & PEP 8
+segment scripts into /src ...
+date-based log files

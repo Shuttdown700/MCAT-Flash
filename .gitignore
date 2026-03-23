@@ -1,0 +1,23 @@
+# Data
+csv_data/*
+logs/*
+*.csv
+*.pptx
+*.pdf
+*.log
+
+# Python
+__pycache__/*
+*.pyc
+*.pyo
+
+# Environment
+flashenv/*
+venv/*
+env/*
+*.env
+
+# Exceptions
+!/csv_data/.gitkeep
+!/logs/.gitkeep
+

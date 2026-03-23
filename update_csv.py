@@ -1,37 +1,62 @@
-#!/usr/bin/env python3
-import csv
 import sys
+import csv
+import os
 
-def update_csv(input_file, newThingName):
-    existing_room = None
+def main():
+    # --- BRACKET-FREE ARGUMENT PARSING ---
+    args = sys.argv.copy()
+    
+    if len(args) < 3:
+        print("ERROR_MISSING_ARGS")
+        sys.exit(1)
+
+    script_name = args.pop(0)
+    csv_path = str(args.pop(0)).strip()
+    thing_name = str(args.pop(0)).strip()
+
+    if not os.path.exists(csv_path):
+        print("ERROR_FILE_NOT_FOUND")
+        sys.exit(1)
+
+    rows = []
+    assigned_room = "UNKNOWN_ROOM"
     updated = False
 
-    with open(input_file, 'r', newline='') as csvfile:
-        reader = csv.reader(csvfile)
-        updated_rows = []
+    with open(csv_path, mode='r', newline='', encoding='utf-8') as f:
+        reader = csv.reader(f)
         
         for row in reader:
-            if not updated and len(row) >= 2 and row[1] == "":
-                row[1] = newThingName
-                existing_room = row[0]  # Capture the room name associated with this thingName
-                updated = True  # Mark that we've updated the first empty cell
+            if not row:
+                rows.append(row)
+                continue
             
-            updated_rows.append(row)
+            # --- BRACKET-FREE ROW PARSING ---
+            if not updated:
+                temp_row = row.copy()
+                room_name = temp_row.pop(0) # Grab the first column
+                
+                sensor_name = ""
+                if len(temp_row) > 0:
+                    sensor_name = temp_row.pop(0) # Grab the second column if it exists
+                    
+                if sensor_name.strip() == "":
+                    # Found an empty slot! Rebuild the row.
+                    row.clear()
+                    row.append(room_name)
+                    row.append(thing_name)
+                    assigned_room = room_name.strip()
+                    updated = True
+            
+            rows.append(row)
 
     if updated:
-        with open(input_file, 'w', newline='') as csvfile:
-            writer = csv.writer(csvfile)
-            writer.writerows(updated_rows)
-
-    return existing_room
+        with open(csv_path, mode='w', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            writer.writerows(rows)
+            
+        print(assigned_room)
+    else:
+        print("NO_EMPTY_SLOTS")
 
 if __name__ == "__main__":
-    if len(sys.argv) < 3:
-        print("Usage: python update_csv.py <input_file> <new_thing_name>")
-        sys.exit(1)
-    
-    input_file = sys.argv[1]
-    newThingName = sys.argv[2]
-
-    room_name = update_csv(input_file, newThingName)
-    print(room_name)
+    main()
