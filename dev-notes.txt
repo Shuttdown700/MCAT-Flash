@@ -3,29 +3,16 @@ Priority: 1 (Low) - 10 (Critical)
 ###########################################
 
 ###########################################
-Need a way of editing or selecting the Room from a dropdown, with the next unassigned being prompted but option to overrite exisiting Room
-
-
-[1] flashing standard output is delayed 
-[1] binary hashing of the sensor.bin from json repo
-[1] MCAT-ify the UI and codebase
+[3] binary hashing of the sensor.bin from json repo
+[1] MCAT-ify the UI and codebase [colors,logos]
+[1] make the layout more landscape and less vertical
 [3] MCAT venv setup script
-[1] encorporate find_usb into the GUI
-[2] save generated .png
-[7] better error handling and output is the sensor is unplugged, or double check sensor is plugged immediently before flashing
-[7] provide the user with a warning popup that another sensor is already flashed for this room if detected in the csv database (entire directory is in scope), provide user option to override
-[7] need a amber/orange popup when a user has selected a target room that a sensor that has already been flashed
-[7] check and provide a warning popup that the sensor is currently assigned to another room within the csv database (entire directory is in scope), provide user option to override
-need a satisfying green popup when sensor flash is a success
-
-[3] option to re-print previously generated .png 
-refined logs that outline which device was flashed to which room at what datetime
+[1] save generated .png
+[1] option to re-print previously generated .png 
 [1] pylinting & PEP 8
 [2] segment scripts into /src ...
-[2] date-based log files
-[3] add green color to "Success" and "Ready" and orange color "in-progress" type messages
+[3] script and date-based log files
 [1] check for headers in csv files, if not then generate headers: [BLDG-RM, MCAT Sensor Device ID, Datetime Flashed]
 [1] allow option for more csv header columns [Installation,Building Number,Room Number,MCAT Sensor Device ID, Datetime Flashed]
 [1] csv file validator, format checker, and reformater
 [1] a way to detect if the sensor was plugged in without holding the boot button
-[2] more details in logs on deivce MAC, room assignment

@@ -1,3 +1,5 @@
+from concurrent.futures import process
+
 from nicegui import ui, events, app
 import asyncio
 import os
@@ -6,6 +8,7 @@ import logging
 from logger import app_logger, LOG_FILE # Import our new custom logger
 import sys
 import usb.core
+import re
 import serial.tools.list_ports
 import libusb_package
 import csv
@@ -17,15 +20,16 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 # --- State Management ---
 class AppState:
     def __init__(self):
-            self.available_files = self.get_uploaded_files()
-            self.selected_file = None
-            self.rooms = []           # NEW: Holds all rooms for the dropdown
-            self.selected_room = None # NEW: The currently targeted room
-            self.status_message = "Please select or upload a CSV file to begin."
-            self.status_color = "grey"
-            self.is_processing = False
-            self.action_prompt = ""
-            self.waiting_for_unplug = False
+        self.available_files = self.get_uploaded_files()
+        self.selected_file = None
+        self.rooms = []           
+        self.selected_room = None 
+        self.status_message = "Please select or upload a CSV file to begin."
+        self.status_color = "grey"
+        self.is_processing = False
+        self.action_prompt = ""
+        self.waiting_for_unplug = False
+        self.skip_printing = False # NEW: Track skip printing state
 
     def get_uploaded_files(self):
         return [f for f in os.listdir(UPLOAD_DIR) if f.endswith('.csv')]
@@ -36,6 +40,68 @@ class AppState:
 state = AppState()
 
 # --- Helper Functions ---
+def scan_csv_directory_for_conflicts(target_room=None, target_sensor=None):
+    """Scans all CSVs in the UPLOAD_DIR for room or sensor assignments."""
+    for filename in os.listdir(UPLOAD_DIR):
+        if not filename.endswith('.csv'): continue
+        filepath = os.path.join(UPLOAD_DIR, filename)
+        
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                reader = csv.reader(f)
+                for row in reader:
+                    if len(row) < 2: continue
+                    room, sensor = row[0].strip(), row[1].strip()
+                    
+                    if target_room and room == target_room and sensor:
+                        return True, sensor, filename
+                    
+                    if target_sensor and sensor == target_sensor:
+                        return True, room, filename
+        except Exception as e:
+            app_logger.warning(f"Failed to read {filename} during conflict scan: {e}")
+            
+    return False, None, None
+
+def precheck_sensor_mac():
+    """Quickly grabs the MAC address before the heavy flashing process begins."""
+    try:
+        ports = serial.tools.list_ports.comports()
+        detected_port = next((p.device for p in ports if p.vid in [0x303a, 0x1a86]), None)
+        if not detected_port: return None
+        
+        cmd = [sys.executable, '-m', 'esptool', '-p', detected_port, 'read_mac']
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        
+        match = re.search(r"([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}", result.stdout)
+        if match:
+            mac = match.group(0)
+            return f"THE-{mac.replace(':', '').strip()}"
+    except Exception as e:
+        app_logger.warning(f"MAC precheck failed: {e}")
+    return None
+
+async def handle_skip_print_change(e):
+    if e.value:
+        # User checked the box, prompt for confirmation
+        with ui.dialog() as dialog, ui.card():
+            ui.label('Are you sure you want to skip printing labels?').classes('text-lg font-bold')
+            ui.label('You will need to manually identify this sensor.').classes('text-gray-600 mb-4')
+            with ui.row().classes('w-full justify-end mt-4'):
+                ui.button('Cancel', color='grey', on_click=lambda: dialog.submit(False))
+                ui.button('Yes, Skip', color='negative', on_click=lambda: dialog.submit(True))
+        
+        result = await dialog
+        if result:
+            state.skip_printing = True
+            app_logger.info("User opted to SKIP label printing.")
+        else:
+            e.sender.value = False # Revert UI checkbox
+            state.skip_printing = False
+    else:
+        state.skip_printing = False
+        app_logger.info("User opted to RESUME label printing.")
+
 async def handle_upload(e: events.UploadEventArguments):
     app_logger.info(f"Uploading new file: {e.file.name}")
     file_path = os.path.join(UPLOAD_DIR, e.file.name)
@@ -49,7 +115,7 @@ async def handle_upload(e: events.UploadEventArguments):
         
         file_dropdown.options = state.available_files 
         file_dropdown.update()
-        app_logger.info("Upload successful.")
+        app_logger.info(f"Successfully uploaded {e.file.name}.")
     except Exception as e:
         app_logger.exception(f"Failed to upload file {e.file.name}")
         ui.notify('Upload failed. Check logs.', type='negative')
@@ -103,7 +169,7 @@ def load_rooms_from_csv():
             state.selected_room = next_available
             
     except Exception as e:
-        app_logger.error(f"Failed to read CSV: {e}")
+        app_logger.error(f"Failed to read CSV file {state.selected_file}: {e}")
 
 def handle_file_change(e):
     state.selected_file = e.value
@@ -112,6 +178,23 @@ def handle_file_change(e):
     room_dropdown.value = state.selected_room
     room_dropdown.update()
     update_ui_state()
+    app_logger.info(f"Selected file changed to: {state.selected_file}")
+
+def handle_room_change(e):
+    state.selected_room = e.value
+    update_ui_state()
+    
+    # NEW: Trigger amber warning if the selected room is already assigned
+    if e.value:
+        is_assigned, assigned_sensor, filename = scan_csv_directory_for_conflicts(target_room=e.value)
+        if is_assigned:
+            ui.notify(
+                f"Warning: {e.value} is already assigned to {assigned_sensor} in {filename}", 
+                type='warning', # Automatically applies amber/orange styling
+                icon='warning',
+                timeout=6000,
+                position='top'
+            )
 
 def update_ui_state():
     if not state.selected_file or not state.selected_room: # Added selected_room check
@@ -120,7 +203,7 @@ def update_ui_state():
         state.action_prompt = ""
         test_button.disable()
     elif not state.is_processing and not state.waiting_for_unplug:
-        state.status_message = f"Ready to flash using {state.selected_file}."
+        state.status_message = f"Ready to flash using {state.selected_file} and Room: {state.selected_room}"
         state.status_color = "blue"
         state.action_prompt = "PLUG IN MCAT SENSOR WHILE HOLDING THE BOOT BUTTON TO GET STARTED"
         test_button.enable()
@@ -164,7 +247,7 @@ def is_printer_connected():
             try:
                 serial = printer.serial_number
             except Exception:
-                app_logger.warning("Could not read printer serial number. Using generic ID.")
+                app_logger.warning(f"Could not read printer serial number {printer.serial_number}. Using generic ID.")
             
             printer_id = f"usb://0x04f9:0x209b/{serial}"
             app_logger.info(f"Printer verified via WinUSB at {printer_id}")
@@ -179,23 +262,63 @@ def is_printer_connected():
         return None
 
 async def trigger_flash_process():
-    app_logger.info("=== STARTING HARDWARE FLASH PROCESS ===")
+    app_logger.info(f"Starting flash process for MCAT sensor: {precheck_sensor_mac()}, Room: {state.selected_room}, File: {state.selected_file}")
     
-    # --- NEW: Pre-flight connection check ---
     if not is_sensor_connected():
         app_logger.warning("Flash aborted: MCAT Sensor disconnected immediately before flashing.")
         ui.notify('MCAT Sensor disconnected! Please plug it back in.', type='negative')
         return
-    # ----------------------------------------
+
+    # --- NEW: Pre-flight Room Conflict Check ---
+    is_assigned, assigned_sensor, filename = scan_csv_directory_for_conflicts(target_room=state.selected_room)
+    if is_assigned:
+        with ui.dialog() as dialog, ui.card().classes('items-center p-6'):
+            ui.icon('warning', color='warning').classes('text-5xl mb-2')
+            ui.label(f'Target Room Conflict').classes('text-xl font-bold text-orange-500 mb-2')
+            ui.label(f'{state.selected_room} is already assigned to {assigned_sensor} in {filename}.')
+            ui.label('Do you want to override this and flash anyway?').classes('text-gray-600 mb-4')
+            with ui.row().classes('w-full justify-end mt-2'):
+                ui.button('Cancel', color='grey', on_click=lambda: dialog.submit(False))
+                ui.button('Override', color='negative', on_click=lambda: dialog.submit(True))
+        
+        if not await dialog:
+            app_logger.info("User canceled flash due to room conflict.")
+            state.waiting_for_unplug = True
+            return
+
+    # --- NEW: Pre-flight Sensor MAC Conflict Check ---
+    ui.notify('Checking sensor hardware ID...', type='info', timeout=2000)
+    thing_name = await asyncio.to_thread(precheck_sensor_mac)
     
-    # Capture printer info ONCE
-    printer_info = is_printer_connected()
+    if thing_name:
+        is_assigned, assigned_room, filename = scan_csv_directory_for_conflicts(target_sensor=thing_name)
+        if is_assigned:
+            with ui.dialog() as dialog, ui.card().classes('items-center p-6'):
+                ui.icon('swap_horiz', color='warning').classes('text-5xl mb-2')
+                ui.label('Sensor Already Provisioned!').classes('text-xl font-bold text-orange-500 mb-2')
+                ui.label(f'This sensor ({thing_name}) is already assigned to {assigned_room} in {filename}.')
+                ui.label(f'Continue flashing {thing_name} to {state.selected_room}?').classes('text-gray-600 mb-4')
+                with ui.row().classes('w-full justify-end mt-2'):
+                    ui.button('Cancel', color='grey', on_click=lambda: dialog.submit(False))
+                    ui.button('Continue', color='negative', on_click=lambda: dialog.submit(True))
+            
+            if not await dialog:
+                app_logger.info("User canceled flash due to sensor conflict.")
+                state.waiting_for_unplug = True
+                return
+    # ----------------------------------------------
+    
+    # Capture printer info ONCE (Bypass if skipping print)
+    if state.skip_printing:
+        printer_info = "SKIPPED"
+    else:
+        printer_info = is_printer_connected()
     
     if not printer_info:
         app_logger.warning("Brother QL-800 printer not detected.")
         state.status_message = "Printer Not Found"
         state.status_color = "negative"
-        state.action_prompt = "PLEASE PLUG IN AND TURN ON THE LABEL MAKER ()"
+        state.action_prompt = "PLEASE PLUG IN AND TURN ON THE LABEL MAKER"
         ui.notify('Brother QL-800 not detected via USB.', type='warning')
         update_ui_state()
         state.waiting_for_unplug = True 
@@ -207,49 +330,62 @@ async def trigger_flash_process():
     test_button.disable()
 
     try:
-        state.status_message = "Flashing and Printing in progress..."
+        if not state.skip_printing:
+            state.status_message = "Flashing and Printing in progress..."
+        else:
+            state.status_message = "Flashing in progress..."
         state.status_color = "warning"
         state.action_prompt = "DO NOT UNPLUG THE SENSOR"
         update_ui_state()
         
         target_csv_path = os.path.join(UPLOAD_DIR, state.selected_file)
         
+        cmd = [sys.executable, 'flash_print.py']
+        if state.skip_printing:
+            cmd.append('--skip-print')
+        cmd.extend([str(target_csv_path), str(state.selected_room), str(printer_info)])
+
         process = await asyncio.to_thread(
             subprocess.run,
-            [sys.executable, 'flash_print.py', str(target_csv_path), str(state.selected_room), str(printer_info)],
+            cmd,
             capture_output=True,
             text=True,
             check=True 
         )
 
-        # --- FIX: Check both stdout and stderr since the logger uses stderr ---
-
-        # ----------------------------------------------------------------------
-
-        # Refresh the room list to advance the dropdown
+        app_logger.info(f"Script (flash_print.py) Output:\n{process.stdout}")
         load_rooms_from_csv()
         room_dropdown.value = state.selected_room
         room_dropdown.update()
 
-        state.status_message = "Success! MCAT Sensor flashed and labels printed."
+        state.status_message = "Success! MCAT Sensor flashed."
         state.status_color = "positive"
         state.action_prompt = "YOU MAY NOW UNPLUG THE MCAT SENSOR"
         state.waiting_for_unplug = True
         update_ui_state()
-        app_logger.info("Hardware flash process completed successfully.")
+        app_logger.info(f"Successfully flashed MCAT sensor: {precheck_sensor_mac()} to Room: {state.selected_room}")
+        
+        # NEW: Satisfying Green Popup
+        ui.notify(
+            f'SUCCESS: Provisioned {state.selected_room}', 
+            type='positive', 
+            position='center', 
+            icon='check_circle',
+            classes='text-2xl p-4 font-bold border-2 border-green-700 shadow-xl',
+            timeout=8000,
+            close_button=True
+        )
         
     except subprocess.CalledProcessError as e:
-        app_logger.error(f"Flashing script failed.")
+        app_logger.error("Flashing script failed.")
         
-        # --- NEW: Mid-flash disconnection handling ---
         if not is_sensor_connected():
-            app_logger.error(f"MCAT Sensor was likely unplugged during flashing!")
+            app_logger.error(f"MCAT Sensor {precheck_sensor_mac()} was likely unplugged during flashing!")
             state.status_message = "MCAT Sensor Unplugged During Flash!"
             ui.notify('Do not unplug the MCAT Sensor until "Success" is shown.', type='negative')
         else:
             state.status_message = "Flashing Failed. Check logs."
             ui.notify('Script error.', type='negative')
-        # ---------------------------------------------
             
         state.status_color = "negative"
         state.action_prompt = "PLEASE UNPLUG MCAT SENSOR AND TRY AGAIN"
@@ -270,11 +406,14 @@ async def trigger_flash_process():
         file_dropdown.enable()
         delete_button.enable()
 
+
 async def trigger_test_process():
-    app_logger.info("=== STARTING SYSTEM TEST MODE ===")
+    app_logger.info(f"Starting system test process with simulated data for file: {state.selected_file}")
     
-    # Capture printer info ONCE
-    printer_info = is_printer_connected()
+    if state.skip_printing:
+        printer_info = "SKIPPED"
+    else:
+        printer_info = is_printer_connected()
     
     if not printer_info:
         app_logger.warning("Brother QL-800 printer not detected.")
@@ -298,17 +437,27 @@ async def trigger_test_process():
         
         target_csv_path = os.path.join(UPLOAD_DIR, state.selected_file)
 
+        # Build the command dynamically
+        cmd = [sys.executable, 'flash_print.py']
+        if state.skip_printing:
+            cmd.append('--skip-print')
+        # Add --test for trigger_test_process ONLY
+        cmd.append('--test') 
+        cmd.extend([str(target_csv_path), str(state.selected_room), str(printer_info)])
+
         process = await asyncio.to_thread(
             subprocess.run,
-            [sys.executable, 'flash_print.py', '--test', str(target_csv_path), str(state.selected_room), str(printer_info)],
+            cmd,
             capture_output=True,
             text=True,
             check=True 
         )
         
-        app_logger.info(f"Script Output:\n{process.stdout}")
-
-        state.status_message = "Test Complete! Labels should be printing."
+        app_logger.info(f"Script (flash_print.py) Output:\n{process.stdout}")
+        if not state.skip_printing:
+            state.status_message = "Test Complete! Labels should be printing."
+        else:
+            state.status_message = "Test Complete! (Printing Skipped)"
         state.status_color = "positive"
         state.action_prompt = "READY FOR HARDWARE"
         update_ui_state()
@@ -318,7 +467,7 @@ async def trigger_test_process():
         
     except subprocess.CalledProcessError as e:
         app_logger.error(f"Test script failed with exit code {e.returncode}")
-        app_logger.error(f"Script STDERR:\n{e.stderr}")
+        app_logger.error(f"Script (flash_print.py) STDERR:\n{e.stderr}")
         state.status_message = "Test Failed. Check logs."
         state.status_color = "negative"
         ui.notify('Script error.', type='negative')
@@ -343,11 +492,11 @@ async def sensor_watch_loop():
 
     if state.waiting_for_unplug:
         if not connected:
-            app_logger.debug("MCAT sensor unplugged. Resetting state.")
+            app_logger.debug(f"MCAT sensor {precheck_sensor_mac()} unplugged. Resetting state.")
             state.waiting_for_unplug = False
             update_ui_state()
     elif connected and not state.waiting_for_unplug:
-        app_logger.info("New MCAT sensor detected!")
+        app_logger.info(f"New MCAT sensor {precheck_sensor_mac()} detected!")
         await trigger_flash_process()
 
 # --- UI Layout ---
@@ -387,8 +536,15 @@ with ui.tab_panels(tabs, value='Flasher').classes('w-full bg-transparent'):
                     room_dropdown = ui.select(
                         options=state.rooms,
                         value=state.selected_room,
-                        on_change=lambda e: (setattr(state, 'selected_room', e.value), update_ui_state())
+                        on_change=handle_room_change # Point to the new handler here
                     ).classes('w-full')
+                    
+                    ui.separator().classes('my-4')
+                    
+                    # NEW: Skip Printing Checkbox
+                    ui.checkbox('Skip Label Printing', value=state.skip_printing, on_change=handle_skip_print_change).classes('font-bold text-accent w-full')
+
+                    ui.separator().classes('my-4')
                     
                     delete_button = ui.button('Delete Selected File', color='negative', icon='delete', on_click=delete_selected_file).classes('w-full mt-2')
 

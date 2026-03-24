@@ -32,11 +32,8 @@ def get_esp_port():
             return port.device
     return None
 
-def print_to_brother(image_path):
-    """Native printing function forcing the safe generic USB ID."""
-    # We strictly use the generic ID. NO serial numbers allowed.
-    safe_printer_id = "usb://0x04f9:0x209b" 
-    
+def print_to_brother(image_path, printer_id):
+    """Native printing function using the dynamically detected USB ID."""
     qlr = BrotherQLRaster('QL-800')
     instructions = convert(
         qlr=qlr, 
@@ -49,11 +46,13 @@ def print_to_brother(image_path):
         red=False, 
         dpi_600=False
     )
+    
+    # Use the printer_id passed into the function instead of a hardcoded string
+    send(instructions=instructions, printer_identifier=printer_id, backend_identifier='pyusb', blocking=True)
         
 
 def main():
     # 1. Parse Arguments
-# 1. Parse Arguments
     args = sys.argv.copy()
     script_name = args.pop(0) 
     
@@ -61,6 +60,11 @@ def main():
     test_mode = '--test' in args
     if test_mode:
         args.remove('--test')
+
+    # NEW: Extract skip print mode
+    skip_print = '--skip-print' in args
+    if skip_print:
+        args.remove('--skip-print')
         
     # Grab remaining arguments safely
     csv_file = str(args.pop(0)).strip() if args else "data.csv"
@@ -128,15 +132,20 @@ def main():
             sys.exit(1)
 
     # 5. Print the Labels
-    # Label 1
-    subprocess.run([PYTHON_EXE, 'make_png.py', thing_name], check=True)
-    print_to_brother('label.png')
-    if os.path.exists("label.png"): os.remove("label.png")
+    if not skip_print:
+        # Label 1
+        subprocess.run([PYTHON_EXE, 'make_png.py', thing_name], check=True)
+        print_to_brother('label.png', printer_info)
+        if os.path.exists("label.png"): os.remove("label.png")
 
-    # Label 2
-    subprocess.run([PYTHON_EXE, 'make_png.py', room], check=True)
-    print_to_brother('label.png')
-    if os.path.exists("label.png"): os.remove("label.png")
+        # Label 2
+        subprocess.run([PYTHON_EXE, 'make_png.py', room], check=True)
+        print_to_brother('label.png', printer_info)
+        if os.path.exists("label.png"): os.remove("label.png")
+
+        print("PRINT COMPLETE")
+    else:
+        print("PRINTING SKIPPED")
 
     print("PRINT COMPLETE")
 
