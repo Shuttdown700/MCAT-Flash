@@ -8,6 +8,7 @@ import sys
 import usb.core
 import serial.tools.list_ports
 import libusb_package
+import csv
 
 # --- Configuration ---
 UPLOAD_DIR = 'csv_data'
@@ -16,13 +17,15 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 # --- State Management ---
 class AppState:
     def __init__(self):
-        self.available_files = self.get_uploaded_files()
-        self.selected_file = None
-        self.status_message = "Please select or upload a CSV file to begin."
-        self.status_color = "grey"
-        self.is_processing = False
-        self.action_prompt = ""
-        self.waiting_for_unplug = False
+            self.available_files = self.get_uploaded_files()
+            self.selected_file = None
+            self.rooms = []           # NEW: Holds all rooms for the dropdown
+            self.selected_room = None # NEW: The currently targeted room
+            self.status_message = "Please select or upload a CSV file to begin."
+            self.status_color = "grey"
+            self.is_processing = False
+            self.action_prompt = ""
+            self.waiting_for_unplug = False
 
     def get_uploaded_files(self):
         return [f for f in os.listdir(UPLOAD_DIR) if f.endswith('.csv')]
@@ -66,16 +69,60 @@ def delete_selected_file():
         except Exception as e:
             app_logger.exception(f"Error deleting file {state.selected_file}")
 
-def update_ui_state():
+def load_rooms_from_csv():
     if not state.selected_file:
-        state.status_message = "Please select or upload a CSV file to begin."
+        state.rooms = []
+        state.selected_room = None
+        return
+
+    filepath = os.path.join(UPLOAD_DIR, state.selected_file)
+    rooms = []
+    next_available = None
+    all_full = True
+
+    try:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            reader = csv.reader(f)
+            for row in reader:
+                if not row: continue
+                
+                room_name = row[0].strip()
+                rooms.append(room_name)
+                
+                # Check if the second column (MCAT ID) is empty or missing
+                if all_full and (len(row) < 2 or not row[1].strip()):
+                    next_available = room_name
+                    all_full = False
+        
+        state.rooms = rooms
+        if all_full and rooms:
+            ui.notify(f'All rooms in {state.selected_file} are assigned!', type='warning')
+            
+            state.selected_room = rooms 
+        else:
+            state.selected_room = next_available
+            
+    except Exception as e:
+        app_logger.error(f"Failed to read CSV: {e}")
+
+def handle_file_change(e):
+    state.selected_file = e.value
+    load_rooms_from_csv()
+    room_dropdown.options = state.rooms
+    room_dropdown.value = state.selected_room
+    room_dropdown.update()
+    update_ui_state()
+
+def update_ui_state():
+    if not state.selected_file or not state.selected_room: # Added selected_room check
+        state.status_message = "Please select a CSV file and Target Room."
         state.status_color = "grey"
         state.action_prompt = ""
         test_button.disable()
     elif not state.is_processing and not state.waiting_for_unplug:
         state.status_message = f"Ready to flash using {state.selected_file}."
         state.status_color = "blue"
-        state.action_prompt = "PLUG IN SENSOR TO GET STARTED"
+        state.action_prompt = "PLUG IN MCAT SENSOR WHILE HOLDING THE BOOT BUTTON TO GET STARTED"
         test_button.enable()
     
     status_label.set_text(state.status_message)
@@ -134,6 +181,13 @@ def is_printer_connected():
 async def trigger_flash_process():
     app_logger.info("=== STARTING HARDWARE FLASH PROCESS ===")
     
+    # --- NEW: Pre-flight connection check ---
+    if not is_sensor_connected():
+        app_logger.warning("Flash aborted: MCAT Sensor disconnected immediately before flashing.")
+        ui.notify('MCAT Sensor disconnected! Please plug it back in.', type='negative')
+        return
+    # ----------------------------------------
+    
     # Capture printer info ONCE
     printer_info = is_printer_connected()
     
@@ -141,7 +195,7 @@ async def trigger_flash_process():
         app_logger.warning("Brother QL-800 printer not detected.")
         state.status_message = "Printer Not Found"
         state.status_color = "negative"
-        state.action_prompt = "PLEASE PLUG IN AND TURN ON THE LABEL MAKER"
+        state.action_prompt = "PLEASE PLUG IN AND TURN ON THE LABEL MAKER ()"
         ui.notify('Brother QL-800 not detected via USB.', type='warning')
         update_ui_state()
         state.waiting_for_unplug = True 
@@ -162,36 +216,51 @@ async def trigger_flash_process():
         
         process = await asyncio.to_thread(
             subprocess.run,
-            [sys.executable, 'flash_print.py', str(target_csv_path), str(printer_info)],
+            [sys.executable, 'flash_print.py', str(target_csv_path), str(state.selected_room), str(printer_info)],
             capture_output=True,
             text=True,
             check=True 
         )
-        
-        app_logger.info(f"Script Output:\n{process.stdout}")
 
-        state.status_message = "Success! Sensor flashed and labels printed."
+        # --- FIX: Check both stdout and stderr since the logger uses stderr ---
+
+        # ----------------------------------------------------------------------
+
+        # Refresh the room list to advance the dropdown
+        load_rooms_from_csv()
+        room_dropdown.value = state.selected_room
+        room_dropdown.update()
+
+        state.status_message = "Success! MCAT Sensor flashed and labels printed."
         state.status_color = "positive"
-        state.action_prompt = "YOU MAY NOW UNPLUG THE SENSOR"
+        state.action_prompt = "YOU MAY NOW UNPLUG THE MCAT SENSOR"
         state.waiting_for_unplug = True
         update_ui_state()
         app_logger.info("Hardware flash process completed successfully.")
         
     except subprocess.CalledProcessError as e:
-        app_logger.error(f"Script failed with exit code {e.returncode}")
-        app_logger.error(f"Script STDERR:\n{e.stderr}")
-        state.status_message = "Flashing Failed. Check logs."
+        app_logger.error(f"Flashing script failed.")
+        
+        # --- NEW: Mid-flash disconnection handling ---
+        if not is_sensor_connected():
+            app_logger.error(f"MCAT Sensor was likely unplugged during flashing!")
+            state.status_message = "MCAT Sensor Unplugged During Flash!"
+            ui.notify('Do not unplug the MCAT Sensor until "Success" is shown.', type='negative')
+        else:
+            state.status_message = "Flashing Failed. Check logs."
+            ui.notify('Script error.', type='negative')
+        # ---------------------------------------------
+            
         state.status_color = "negative"
-        state.action_prompt = "PLEASE UNPLUG SENSOR AND TRY AGAIN"
+        state.action_prompt = "PLEASE UNPLUG MCAT SENSOR AND TRY AGAIN"
         state.waiting_for_unplug = True
-        ui.notify('Script error.', type='negative')
         update_ui_state()
         
     except Exception as e:
         app_logger.exception("AN UNEXPECTED SYSTEM ERROR OCCURRED DURING FLASHING")
         state.status_message = "System Error."
         state.status_color = "negative"
-        state.action_prompt = "PLEASE UNPLUG SENSOR AND TRY AGAIN"
+        state.action_prompt = "PLEASE UNPLUG MCAT SENSOR AND TRY AGAIN"
         state.waiting_for_unplug = True
         ui.notify('Unexpected error. Check logs tab.', type='negative')
         update_ui_state()
@@ -231,7 +300,7 @@ async def trigger_test_process():
 
         process = await asyncio.to_thread(
             subprocess.run,
-            [sys.executable, 'flash_print.py', str(target_csv_path), '--test', str(printer_info)],
+            [sys.executable, 'flash_print.py', '--test', str(target_csv_path), str(state.selected_room), str(printer_info)],
             capture_output=True,
             text=True,
             check=True 
@@ -274,18 +343,18 @@ async def sensor_watch_loop():
 
     if state.waiting_for_unplug:
         if not connected:
-            app_logger.debug("Sensor unplugged. Resetting state.")
+            app_logger.debug("MCAT sensor unplugged. Resetting state.")
             state.waiting_for_unplug = False
             update_ui_state()
     elif connected and not state.waiting_for_unplug:
-        app_logger.info("New sensor detected!")
+        app_logger.info("New MCAT sensor detected!")
         await trigger_flash_process()
 
 # --- UI Layout ---
 ui.colors(primary='#2b5cff', secondary='#26da97', accent='#ff5e5e')
 
 with ui.header().classes('items-center justify-between bg-primary text-white shadow-md'):
-    ui.label('Sensor Flashing & Provisioning Tool').classes('text-2xl font-bold p-4')
+    ui.label('MCAT Sensor Flashing & Provisioning Tool').classes('text-2xl font-bold p-4')
     
     with ui.tabs() as tabs:
         ui.tab('Flasher', icon='bolt')
@@ -309,7 +378,16 @@ with ui.tab_panels(tabs, value='Flasher').classes('w-full bg-transparent'):
                     file_dropdown = ui.select(
                         options=state.available_files, 
                         value=state.selected_file,
-                        on_change=lambda e: (setattr(state, 'selected_file', e.value), update_ui_state())
+                        on_change=handle_file_change # Point to the new handler
+                    ).classes('w-full')
+                    
+                    ui.separator().classes('my-4')
+                    
+                    ui.label('Select Target Room').classes('font-semibold text-gray-600')
+                    room_dropdown = ui.select(
+                        options=state.rooms,
+                        value=state.selected_room,
+                        on_change=lambda e: (setattr(state, 'selected_room', e.value), update_ui_state())
                     ).classes('w-full')
                     
                     delete_button = ui.button('Delete Selected File', color='negative', icon='delete', on_click=delete_selected_file).classes('w-full mt-2')
@@ -360,4 +438,4 @@ update_ui_state()
 ui.timer(1.0, sensor_watch_loop)
 ui.timer(0.1, lambda: app_logger.info("=== NICEGUI APPLICATION STARTED ==="), once=True)
 
-ui.run(title="Sensor Flasher UI", port=8080, reload=False)
+ui.run(title="MCAT Sensor Flasher", port=8080, reload=False)

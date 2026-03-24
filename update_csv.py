@@ -3,16 +3,16 @@ import csv
 import os
 
 def main():
-    # --- BRACKET-FREE ARGUMENT PARSING ---
     args = sys.argv.copy()
     
-    if len(args) < 3:
+    if len(args) < 4:
         print("ERROR_MISSING_ARGS")
         sys.exit(1)
 
     script_name = args.pop(0)
     csv_path = str(args.pop(0)).strip()
     thing_name = str(args.pop(0)).strip()
+    target_room = str(args.pop(0)).strip()
 
     if not os.path.exists(csv_path):
         print("ERROR_FILE_NOT_FOUND")
@@ -24,28 +24,18 @@ def main():
 
     with open(csv_path, mode='r', newline='', encoding='utf-8') as f:
         reader = csv.reader(f)
-        
         for row in reader:
             if not row:
                 rows.append(row)
                 continue
             
-            # --- BRACKET-FREE ROW PARSING ---
-            if not updated:
-                temp_row = row.copy()
-                room_name = temp_row.pop(0) # Grab the first column
-                
-                sensor_name = ""
-                if len(temp_row) > 0:
-                    sensor_name = temp_row.pop(0) # Grab the second column if it exists
-                    
-                if sensor_name.strip() == "":
-                    # Found an empty slot! Rebuild the row.
-                    row.clear()
-                    row.append(room_name)
-                    row.append(thing_name)
-                    assigned_room = room_name.strip()
-                    updated = True
+            # If we find the specific room we are targeting, overwrite it
+            if not updated and row[0].strip() == target_room:
+                row.clear()
+                row.append(target_room)
+                row.append(thing_name)
+                assigned_room = target_room
+                updated = True
             
             rows.append(row)
 
@@ -56,7 +46,7 @@ def main():
             
         print(assigned_room)
     else:
-        print("NO_EMPTY_SLOTS")
+        print("ROOM_NOT_FOUND")
 
 if __name__ == "__main__":
     main()

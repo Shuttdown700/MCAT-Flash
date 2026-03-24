@@ -49,18 +49,23 @@ def print_to_brother(image_path):
         red=False, 
         dpi_600=False
     )
-    send(instructions=instructions, printer_identifier=safe_printer_id, backend_identifier='pyusb', blocking=True)
+        
 
 def main():
     # 1. Parse Arguments
+# 1. Parse Arguments
     args = sys.argv.copy()
     script_name = args.pop(0) 
     
-    csv_file = "data.csv"
-    if len(args) > 0:
-        csv_file = str(args.pop(0)).strip() 
+    # Extract test mode and remove it from args if present
+    test_mode = '--test' in args
+    if test_mode:
+        args.remove('--test')
         
-    test_mode = '--test' in sys.argv
+    # Grab remaining arguments safely
+    csv_file = str(args.pop(0)).strip() if args else "data.csv"
+    target_room = str(args.pop(0)).strip() if args else "UNKNOWN_ROOM"
+    printer_info = str(args.pop(0)).strip() if args else "usb://0x04f9:0x209b"
 
     # 2. Hardware Flashing or Test Simulation
     if test_mode:
@@ -76,12 +81,29 @@ def main():
             
         print(f"Flashing device on port {detected_port}...")
         flash_cmd = [PYTHON_EXE, '-m', 'esptool', '-p', detected_port, '--chip', 'esp32c3', 'write-flash', '-z', '0x0', './sensor.bin']
-        subprocess.run(flash_cmd, check=True)
+        
+        # --- NEW: Graceful error handling for the flashing process ---
+        try:
+            # Added capture_output=True to swallow the raw esptool traceback
+            subprocess.run(flash_cmd, check=True, capture_output=True, text=True)
+        except subprocess.CalledProcessError as e:
+            print("\nCRITICAL ERROR: Flashing failed! The sensor may have been unplugged.", file=sys.stderr)
+            sys.exit(1)
+        # -------------------------------------------------------------
         
         print("FLASH COMPLETE")
         
         mac_cmd = [PYTHON_EXE, '-m', 'esptool', '-p', detected_port, 'read_mac']
-        result = subprocess.run(mac_cmd, capture_output=True, text=True, check=True)
+        
+        # --- NEW: Graceful error handling for MAC reading ---
+        try:
+            # Added capture_output=True to swallow the raw esptool traceback
+            result = subprocess.run(mac_cmd, capture_output=True, text=True, check=True)
+        except subprocess.CalledProcessError as e:
+            print("\nCRITICAL ERROR: Could not read MAC address! The sensor may have been unplugged.", file=sys.stderr)
+            sys.exit(1)
+        # ----------------------------------------------------
+            
         match = re.search(r"([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}", result.stdout)
         mac_address = match.group(0) if match else "00:00:00:00:00:00"
 
@@ -89,16 +111,21 @@ def main():
     thing_name = f"THE-{mac_address.replace(':', '').strip()}"
     print(f"Provisioning: {thing_name}")
 
-    # 4. Update the CSV
-    csv_cmd = [PYTHON_EXE, 'update_csv.py', csv_file, thing_name]
-    try:
-        csv_result = subprocess.run(csv_cmd, capture_output=True, text=True, check=True)
-        room = csv_result.stdout.strip()
-        print(f"Room mapped: {room}")
-    except subprocess.CalledProcessError as e:
-        print("\nCRITICAL ERROR: update_csv.py crashed!")
-        print(f"STDERR: {e.stderr}")
-        sys.exit(1)
+    # 4. Update the CSV (or mock it for tests)
+    if test_mode:
+        room = target_room
+        print(f"Room mapped: {room} (SIMULATED)")
+    else:
+        # Pass the target_room to the csv updater
+        csv_cmd = [PYTHON_EXE, 'update_csv.py', csv_file, thing_name, target_room]
+        try:
+            csv_result = subprocess.run(csv_cmd, capture_output=True, text=True, check=True)
+            room = csv_result.stdout.strip()
+            print(f"Room mapped: {room}")
+        except subprocess.CalledProcessError as e:
+            print("\nCRITICAL ERROR: update_csv.py crashed!")
+            print(f"STDERR: {e.stderr}")
+            sys.exit(1)
 
     # 5. Print the Labels
     # Label 1
