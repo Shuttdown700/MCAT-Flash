@@ -1,22 +1,30 @@
-import sys
 import os
-from PIL import Image, ImageFont, ImageDraw
-from logger import app_logger # Import our custom logger
+import sys
+
+from PIL import Image, ImageDraw, ImageFont
+
+from logger import get_app_logger
+
+
+script_logger = get_app_logger('make_png', 'make_png.log')
 
 # Set the font size
 FONT_SIZE = 32
 
+
 def get_font_path():
     """Returns the correct Arial font path based on the operating system."""
     if os.name == 'nt':  # Windows
-        return "arial.ttf" # Pillow automatically checks C:\Windows\Fonts for this
+        # Pillow automatically checks C:\Windows\Fonts for this
+        return "arial.ttf"
     elif sys.platform == 'darwin':  # macOS
         return "/Library/Fonts/Arial.ttf"
     else:  # Linux (Fallback)
-        return "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf" 
+        return "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+
 
 def create_label(text):
-    app_logger.info(f"Generating label PNG for: '{text}'")
+    script_logger.info(f"Generating label PNG for: '{text}'")
     
     try:
         # Create a new image with white background
@@ -28,7 +36,9 @@ def create_label(text):
         try:
             font = ImageFont.truetype(font_path, FONT_SIZE)
         except IOError:
-            app_logger.warning(f"Could not load font {font_path}. Using safe default fallback.")
+            script_logger.warning(
+                f"Could not load font {font_path}. Using safe default fallback."
+            )
             font = ImageFont.load_default()
 
         # Calculate text position
@@ -40,16 +50,17 @@ def create_label(text):
 
         # Save the image
         img.save("label.png")
-        app_logger.info("Successfully generated label.png")
+        script_logger.info(f"Successfully generated label.png for text: '{text}'")
         
     except Exception as e:
-        app_logger.exception("CRITICAL ERROR generating PNG label.")
-        sys.exit(1) # Tell the parent process that this script failed
+        script_logger.critical(f"CRITICAL ERROR generating PNG label: {e}")
+        sys.exit(1)  # Tell the parent process that this script failed
+
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        app_logger.error("make_png.py was called without text arguments.")
+        script_logger.error("make_png.py was called without text arguments.")
         sys.exit(1)
 
-    text = sys.argv[1]
-    create_label(text)
+    label_text = sys.argv[1]
+    create_label(label_text)

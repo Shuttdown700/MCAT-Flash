@@ -3,16 +3,12 @@ Priority: 1 (Low) - 10 (Critical)
 ###########################################
 
 ###########################################
-[3] binary hashing of the sensor.bin from json repo
-[1] MCAT-ify the UI and codebase [colors,logos]
-[1] make the layout more landscape and less vertical
-[3] MCAT venv setup script
+[2] MCAT-ify the UI and codebase [colors,logos]
+[2] make the layout more landscape and less vertical
 [1] save generated .png
 [1] option to re-print previously generated .png 
 [1] pylinting & PEP 8
-[2] segment scripts into /src ...
-[3] script and date-based log files
-[1] check for headers in csv files, if not then generate headers: [BLDG-RM, MCAT Sensor Device ID, Datetime Flashed]
-[1] allow option for more csv header columns [Installation,Building Number,Room Number,MCAT Sensor Device ID, Datetime Flashed]
-[1] csv file validator, format checker, and reformater
+[0] check for headers in csv files, if not then generate headers: [BLDG-RM, MCAT Sensor Device ID, Datetime Flashed]
+[0] allow option for more csv header columns [Installation,Building Number,Room Number,MCAT Sensor Device ID, Datetime Flashed]
+[0] csv file validator, format checker, and reformater
 [1] a way to detect if the sensor was plugged in without holding the boot button

@@ -1,21 +1,29 @@
-import sys
 import csv
 import os
+import sys
+
+from logger import get_app_logger
+
+
+script_logger = get_app_logger('update_csv', 'update_csv.log')
+
 
 def main():
     args = sys.argv.copy()
-    
+
     if len(args) < 4:
-        print("ERROR_MISSING_ARGS")
+        script_logger.error(
+            "update_csv.py was called with insufficient arguments."
+        )
         sys.exit(1)
 
-    script_name = args.pop(0)
+    _ = args.pop(0)  # script_name
     csv_path = str(args.pop(0)).strip()
     thing_name = str(args.pop(0)).strip()
     target_room = str(args.pop(0)).strip()
 
     if not os.path.exists(csv_path):
-        print("ERROR_FILE_NOT_FOUND")
+        script_logger.error("update_csv.py: File not found.")
         sys.exit(1)
 
     rows = []
@@ -28,7 +36,7 @@ def main():
             if not row:
                 rows.append(row)
                 continue
-            
+
             # If we find the specific room we are targeting, overwrite it
             if not updated and row[0].strip() == target_room:
                 row.clear()
@@ -36,7 +44,7 @@ def main():
                 row.append(thing_name)
                 assigned_room = target_room
                 updated = True
-            
+
             rows.append(row)
 
     if updated:
@@ -44,9 +52,18 @@ def main():
             writer = csv.writer(f)
             writer.writerows(rows)
             
+        script_logger.info(
+            f"{os.path.basename(csv_path)} successfully updated || "
+            f"Assigned room: {assigned_room}; Device: {thing_name}"
+        )
+        
+        # Output to stdout so flash_print.py can capture the result
         print(assigned_room)
     else:
-        print("ROOM_NOT_FOUND")
+        script_logger.error(
+            f"update_csv.py: Target room {assigned_room} not found in {csv_path}."
+        )
+
 
 if __name__ == "__main__":
     main()

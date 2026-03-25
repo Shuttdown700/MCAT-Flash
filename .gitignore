@@ -5,6 +5,7 @@ logs/*
 *.pptx
 *.pdf
 *.log
+LLM_context_*.txt
 
 # Python
 __pycache__/*
@@ -20,4 +21,5 @@ env/*
 # Exceptions
 !/csv_data/.gitkeep
 !/logs/.gitkeep
+
 

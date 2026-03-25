@@ -1,0 +1,8 @@
+{
+    "sensor": {
+        "v1.0.0": {
+            "idVendor": "0x303a",
+            "idProduct": "0x1001"
+        }
+    }
+}
