@@ -12,3 +12,7 @@ Priority: 1 (Low) - 10 (Critical)
 [0] allow option for more csv header columns [Installation,Building Number,Room Number,MCAT Sensor Device ID, Datetime Flashed]
 [0] csv file validator, format checker, and reformater
 [1] a way to detect if the sensor was plugged in without holding the boot button
+[1] add metadata to UI to show how many rooms in current csv, how many assigned sensors, how many not, etc.
+[5] add csv permission denied exception (when file is open on the computer)
+[5] correct error when all rooms assigned and the "Ready to flash..." statement prints the list of rooms
+[4] when not pushing the boot button, got a permission error / device failed error. Handle better.
