@@ -1,5 +1,6 @@
 # Data
 csv_data/*
+BLDG_CSVs/*
 logs/*
 *.csv
 *.pptx
