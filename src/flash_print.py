@@ -6,7 +6,6 @@ import subprocess
 import sys
 import time
 
-import libusb_package
 import serial.tools.list_ports
 import usb.core
 from brother_ql.backends.helpers import send
@@ -16,9 +15,9 @@ from brother_ql.raster import BrotherQLRaster
 from logger import get_app_logger
 
 # --- CROSS-PLATFORM USB BACKEND CONFIG ---
-# Only apply the bundled libusb backend if running on Windows.
-# On Linux/Raspberry Pi, pyusb natively finds the system libraries.
+# We import usb.core at the top, but apply the monkey-patch ONLY on Windows
 if os.name == 'nt':
+    import libusb_package
     libusb_backend = libusb_package.get_libusb1_backend()
     original_find = usb.core.find
 
@@ -27,13 +26,6 @@ if os.name == 'nt':
         return original_find(*args, **kwargs)
 
     usb.core.find = patched_find
-
-def patched_find(*args, **kwargs):
-    kwargs['backend'] = libusb_backend
-    return original_find(*args, **kwargs)
-
-usb.core.find = patched_find
-
 
 # --- Globals and Anchors ---
 script_logger = get_app_logger('flash_print', 'flash_print.log')
