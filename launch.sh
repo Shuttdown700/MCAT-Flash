@@ -1,3 +1,3 @@
-source flashenv/bin/activate
+source env/bin/activate
 echo "Launching MCAT Flasher..."
 python ./src/app.py

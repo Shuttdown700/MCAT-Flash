@@ -284,9 +284,12 @@ def is_sensor_connected():
 
 
 def is_printer_connected():
-    """Dynamically finds the Brother QL-800 with extra Windows diagnostics."""
+    """Dynamically finds the Brother QL-800 with cross-platform diagnostics."""
     try:
-        backend = libusb_package.get_libusb1_backend()
+        # Check OS to determine if we need the packaged backend (Windows) or native (Linux)
+        backend = libusb_package.get_libusb1_backend() if os.name == 'nt' else None
+        
+        # If backend is None (Linux), usb.core.find uses the system default automatically
         printer = usb.core.find(idVendor=0x04f9, idProduct=0x209b, backend=backend)
 
         if printer is None:
@@ -306,16 +309,15 @@ def is_printer_connected():
                 serial_num = printer.serial_number
             except Exception:
                 app_logger.warning(
-                    f"Could not read printer serial number {printer.serial_number}. "
-                    "Using generic ID."
+                    f"Could not read printer serial number. Using generic ID."
                 )
 
             printer_id = f"usb://0x04f9:0x209b/{serial_num}"
-            app_logger.info(f"Printer verified via WinUSB at {printer_id}")
+            app_logger.info(f"Printer verified via USB at {printer_id}")
             return printer_id
 
         except usb.core.USBError as e:
-            app_logger.error(f"Printer found but WinUSB access denied: {e}")
+            app_logger.error(f"Printer found but USB access denied (Check udev rules): {e}")
             return None
 
     except Exception as e:

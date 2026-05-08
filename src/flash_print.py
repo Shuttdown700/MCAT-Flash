@@ -15,11 +15,18 @@ from brother_ql.raster import BrotherQLRaster
 
 from logger import get_app_logger
 
+# --- CROSS-PLATFORM USB BACKEND CONFIG ---
+# Only apply the bundled libusb backend if running on Windows.
+# On Linux/Raspberry Pi, pyusb natively finds the system libraries.
+if os.name == 'nt':
+    libusb_backend = libusb_package.get_libusb1_backend()
+    original_find = usb.core.find
 
-# --- THE MAGIC WINDOWS USB PATCH ---
-# We import usb.core at the top, but apply the monkey-patch here
-libusb_backend = libusb_package.get_libusb1_backend()
-original_find = usb.core.find
+    def patched_find(*args, **kwargs):
+        kwargs['backend'] = libusb_backend
+        return original_find(*args, **kwargs)
+
+    usb.core.find = patched_find
 
 def patched_find(*args, **kwargs):
     kwargs['backend'] = libusb_backend

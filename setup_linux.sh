@@ -19,6 +19,7 @@ fi
 source venv/bin/activate
 pip install --upgrade pip
 pip install pyusb brother_ql nicegui esptool Pillow libusb-package pyserial
+pip install -r requirements.txt
 echo "Python dependencies installed successfully."
 
 # 3. Create and apply udev rules for the printer and sensors
@@ -48,8 +49,5 @@ sudo usermod -a -G dialout $USER
 echo "==================================================="
 echo "=== Setup Complete!                             ==="
 echo "==================================================="
-echo "IMPORTANT NEXT STEPS:"
-echo "1. Reboot your Raspberry Pi for the group changes to take effect: sudo reboot"
-echo "2. To run your app in the future, always activate the virtual environment first:"
-echo "   source venv/bin/activate"
-echo "   python src/app.py"
+echo "IMPORTANT NEXT STEP:"
+echo "Reboot the Raspberry Pi for the group changes to take effect: sudo reboot"
