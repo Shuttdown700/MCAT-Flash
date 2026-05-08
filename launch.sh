@@ -1,3 +1,3 @@
-source env/bin/activate
+source venv/bin/activate
 echo "Launching MCAT Flasher..."
 python ./src/app.py
