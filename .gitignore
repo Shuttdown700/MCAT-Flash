@@ -6,6 +6,7 @@ logs/*
 *.pdf
 *.log
 LLM_context_*.txt
+file_tree.txt
 
 # Python
 __pycache__/*
